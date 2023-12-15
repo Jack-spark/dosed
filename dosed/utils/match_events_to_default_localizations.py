@@ -12,11 +12,12 @@ def match_events_localization_to_default_localizations(localizations_default, ev
     number_of_default_events = localizations_default.size(0)
     localizations_target = torch.Tensor(batch, number_of_default_events, 2)
     classifications_target = torch.LongTensor(batch, number_of_default_events)
-
+    #classifications_target=128，63
     for batch_index in range(batch):
 
         # If no event add default value to predict (will never be used anyway)
         # And class 0 == backgroung
+        # 没事件发生标注为0
         if events[batch_index].numel() == 0:
             localizations_target[batch_index][:, :] = torch.FloatTensor(
                 [[-1, 1]]).expand_as(localizations_default)
@@ -25,7 +26,7 @@ def match_events_localization_to_default_localizations(localizations_default, ev
 
         # Else match to most overlapping event and set to background depending on threshold
         localizations_truth = events[batch_index][:, :2]
-        classifications_truth = events[batch_index][:, -1]
+        classifications_truth = events[batch_index][:, -1]#只截取最后一个
         localizations_a = localizations_truth
         localizations_b = torch.cat(
             [(localizations_default[:, 0] - localizations_default[:, 1] / 2).unsqueeze(1),
@@ -54,4 +55,5 @@ def match_events_localization_to_default_localizations(localizations_default, ev
         localizations_target[batch_index][:, :] = localization_target
         classifications_target[batch_index] = classification_target.long()
 
-    return localizations_target, classifications_target
+    return localizations_target, classifications_target#这里返回的是默认定位和真实定位的信息，
+    #都是反应如果真在框内所决定的定位和类别信息，只不过默认定位是根据默认定位框来的，真实定位是根据真实定位框来的

@@ -5,7 +5,6 @@ import shutil
 import numpy as np
 import torch
 import torch.nn as nn
-
 from ..utils import binary_to_array
 
 
@@ -24,7 +23,7 @@ class BaseNet(nn.Module):
             return torch.device('cpu')
 
     def predict(self, x):
-        localizations, classifications, localizations_default = self.forward(x)
+        localizations, classifications, localizations_default, feature = self.forward(x)
         localizations_default = localizations_default.to(self.device)
         return self.detector(localizations, classifications, localizations_default)
 
@@ -76,23 +75,28 @@ class BaseNet(nn.Module):
         overlap = window * overlap_factor
 
         # List of dicts, to save predictions of each class per record
+        # 保存每个类的预测结果
         predictions = {}
-        for record in inference_dataset.records:
+        for record in inference_dataset.records:# record是文件名
             predictions[record] = []
+            #result=1,691200
             result = np.zeros((self.number_of_classes - 1,
-                               inference_dataset.signals[record]["size"]))
-            for signals, times in inference_dataset.get_record_batch(
+                               inference_dataset.signals[record]["size"]))# 信号总长度691200
+            for signals, times in inference_dataset.get_record_batch(#把信号切成一批批的窗口，每10s一个，重叠5s
                     record,
                     batch_size=int(batch_size),
                     stride=overlap):
-                x = signals.to(self.device)
-                batch_predictions = self.predict(x)
+                x = signals.to(self.device)# x=128,2,320,time=128,320
+                batch_predictions = self.predict(x)# list,len=128
+                
+                
 
-                for events, time in zip(batch_predictions, times):
+
+                for events, time in zip(batch_predictions, times):#event代表事件发生的时间，第三个标签表示是否是这个事件
                     for event in events:
                         start = int(round(event[0] * window_size + time[0]))
                         stop = int(round(event[1] * window_size + time[0]))
-                        result[event[2], start:stop] = 1
+                        result[event[2], start:stop] = 1# 应该说的是事件和窗口时间
 
             predicted_events = [binary_to_array(k) for k in result]
             assert len(predicted_events) == self.number_of_classes - 1
@@ -110,14 +114,14 @@ class BaseNet(nn.Module):
 
 
 def get_overlerapping_default_events(window_size, default_event_sizes, factor_overlap=2):
-    window_size = window_size
+    window_size = window_size#320窗口大小
     default_event_sizes = default_event_sizes
     factor_overlap = factor_overlap
     default_events = []
     for default_event_size in default_event_sizes:
-        overlap = default_event_size / factor_overlap
-        number_of_default_events = int(window_size / overlap)
-        default_events.extend(
+        overlap = default_event_size / factor_overlap#重叠的点数。50%重叠
+        number_of_default_events = int(window_size / overlap)#默认事件的个数
+        default_events.extend(#将每个元素添加到末尾，计算每个默认事件开始时间，以及在windows中所占的比例
             [(overlap * (0.5 + i) / window_size, default_event_size / window_size)
              for i in range(number_of_default_events)]
         )

@@ -42,14 +42,15 @@ class DOSEDSimpleLoss(nn.Module):
 
     def forward(self, localizations, classifications, localizations_target,
                 classifications_target):
-
-        positive = classifications_target > 0
-        negative = self.get_negative_index(positive, classifications,
+        #一个batch的损失
+        positive = classifications_target > 0#1024，63，spindle分为positive，等于1被标为true
+        negative = self.get_negative_index(positive, classifications,#获取负样本的索引。这个方法可能会根据positive（正样本的索引）、classifications
+        #（模型的分类预测结果）和classifications_target（真实的类别标签）来确定哪些样本是负样本。
                                            classifications_target)
-
-        number_of_positive_all = positive.long().sum().float()
-        number_of_negative_all = negative.long().sum().float()
-
+        #等于0被标为true
+        number_of_positive_all = positive.long().sum().float()#2247个正样本，真实的
+        number_of_negative_all = negative.long().sum().float()#62265个负样本
+        #1064*63=62265+2247=64512
         # loc loss
         loss_localization = self.localization_loss(positive, localizations,
                                                    localizations_target)
@@ -57,12 +58,12 @@ class DOSEDSimpleLoss(nn.Module):
         # + Classification loss
         loss_classification_positive = 0
         if number_of_positive_all > 0:
-            loss_classification_positive = self.get_classification_loss(
-                positive, classifications, classifications_target)
+            loss_classification_positive = self.get_classification_loss(#计算分类损失
+                positive, classifications, classifications_target)#正样本，预测分类，真实分类
 
         # - Classification loss
         loss_classification_negative = 0
-        if number_of_negative_all > 0:
+        if number_of_negative_all > 0:#负样本的损失
             loss_classification_negative = self.get_classification_loss(
                 negative, classifications, classifications_target)
 
@@ -74,7 +75,8 @@ class DOSEDSimpleLoss(nn.Module):
             loss_classification_negative /
             number_of_negative_all)
         loss_localization_normalized = loss_localization / number_of_positive_all
-
+        #这里应该是可以加一个分类准确率的东西的
+        
         return (loss_classification_positive_normalized,
                 loss_classification_negative_normalized,
                 loss_localization_normalized)

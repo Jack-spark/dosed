@@ -1,6 +1,7 @@
 import warnings
 from collections import OrderedDict
-
+import sys
+sys.path.append("..")
 import torch.nn as nn
 
 from ..functions import Detection
@@ -37,8 +38,8 @@ class DOSED3(BaseNet):
         # Localizations to default tensor
         self.localizations_default = get_overlerapping_default_events(
             window_size=self.window_size,
-            default_event_sizes=default_event_sizes
-        )
+            default_event_sizes=default_event_sizes#窗口尺寸和默认事件的尺寸
+        )#
 
         # model
         self.blocks = nn.ModuleList(
@@ -73,22 +74,26 @@ class DOSED3(BaseNet):
             padding=0,
         )
 
-        self.print_info_architecture(fs)
+        #self.print_info_architecture(fs)
 
-    def forward(self, x):
-        batch = x.size(0)
+    def forward(self, x):#x.size=8,2,320
+        batch = x.size(0)#batch=8
         for block in self.blocks:
             x = block(x)
-        localizations = self.localizations(x).squeeze().view(batch, -1, 2)
-        classifications = self.classifications(x).squeeze().view(batch, -1, self.number_of_classes)
-
-        return localizations, classifications, self.localizations_default
+        #经过blocks后x.size=8，128，10
+        #self.localizations=8,126,1
+        #self.localizations(x).squeeze().size=8,126
+        feature = x
+        localizations = self.localizations(x).squeeze().view(batch, -1, 2)#localizations.size=8,3,2
+        classifications = self.classifications(x).squeeze().view(batch, -1, self.number_of_classes)#classifications.size=8,3,2
+        
+        return localizations, classifications, self.localizations_default, feature
 
     def print_info_architecture(self, fs):
 
         size = self.window_size
         receptive_field = 0
-        print("\nInput feature map size: {}".format(size))
+        print("\nInput feature map size: {}".format(size))#输入有320个点
         print("Input receptive field: {}".format(receptive_field))
         print("Input size in seconds: {} s".format(size / fs))
         print("Input receptive field in seconds: {} s \n".format(receptive_field / fs))
@@ -112,3 +117,27 @@ class DOSED3(BaseNet):
             print("\tReceptive field in seconds: {} s".format(
                 receptive_field / fs))
         print("\n")
+
+# if __name__ == "__main__":
+#     default_event_sizes = [0.7, 1, 1.3]#如何选取默认事件的大小，要检测的事件是脑电活动（spindle），大小约为1s
+#     k_max = 5
+#     kernel_size = 5
+#     probability_dropout = 0.1
+#     sampling_frequency = 32
+#     net_parameters = {
+#     "detection_parameters": {
+#         "overlap_non_maximum_suppression": 0.5,
+#         "classification_threshold": 0.7
+#     },
+#     "default_event_sizes": [
+#         default_event_size * sampling_frequency
+#         for default_event_size in default_event_sizes
+#     ],
+#     "k_max": k_max,
+#     "kernel_size": kernel_size,
+#     "pdrop": probability_dropout,
+#     "fs": sampling_frequency,   # just used to print architecture info with right time
+#     "input_shape": (2, 320),# 2，10s，采样率32hz
+#     "number_of_classes": 1,# 1
+
+# }

@@ -27,7 +27,7 @@ for record in tqdm.tqdm(records):
         spindles = [
             (x["start"], x["end"] - x["start"]) for x in json.load(open(spindle_filename))
         ]
-        starts, durations = list(zip(*spindles))
+        starts, durations = list(zip(*spindles))# spindle的开始时间和持续时间，为一个元组
         h5.create_group("spindle")
         h5.create_dataset("spindle/start", data=starts)
         h5.create_dataset("spindle/duration", data=durations)

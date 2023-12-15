@@ -23,7 +23,7 @@ def compute_metrics_dataset(
     metrics = {
         score: score_function for score, score_function in
         available_score_functions.items() if score in test_metrics
-    }
+    }# 三个度量指标和其对应的度量函数
 
     metrics_test = [{
         metric: []
@@ -41,19 +41,20 @@ def compute_metrics_dataset(
 
         for record in test_dataset.records:
 
-            # Select current event predictions
+            # Select current event predictions，预测事件居然有4319个
             predicted_events = all_predicted_events[record][event_num]
-
+            # 一个record预测的一个events，因为只有一个事件，event_num只有一个
             # If no predictions skip record, else some_events = 1
             if len(predicted_events) == 0:
                 continue
 
-            found_some_events = True
+            found_some_events = True#找到了事件
 
-            # Select current true events
+            # Select current true events，选择真实事件存在，88个真实事件
             events = test_dataset.get_record_events(record)[event_num]
 
             # Compute_metrics(events, predicted_events, threshold)
+            # 这里进行预测事件和真实事件的计算
             for metric in metrics.keys():
                 metrics_test[event_num][metric].append(metrics[metric](
                     predicted_events,

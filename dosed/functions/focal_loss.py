@@ -24,11 +24,11 @@ class DOSEDFocalLoss(DOSEDSimpleLoss):
     def get_classification_loss(self, index, classifications,
                                 classifications_target):
         index_expanded = index.unsqueeze(2).expand_as(classifications)
-
+        #原本是1024，63，扩充至1024，63，2，只是通过复制数据实现
         cross_entropy = F.cross_entropy(
             classifications[index_expanded.gt(0)
-                            ].view(-1, self.number_of_classes),
-            classifications_target[index.gt(0)],
+                            ].view(-1, self.number_of_classes),#正样本的预测结果,2247,2,2247个正样本，2是两类的概率
+            classifications_target[index.gt(0)],#2247个正样本，全都是1
             reduction="none",
         )
         pt = torch.exp(-cross_entropy)

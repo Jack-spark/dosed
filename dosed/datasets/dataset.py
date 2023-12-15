@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 
 from ..utils import get_h5_data, get_h5_events
 
+from ..functions.augmentations import DataTransform 
 
 class EventDataset(Dataset):
 
@@ -63,7 +64,7 @@ class EventDataset(Dataset):
         self.transformations = transformations
 
         # window parameters
-        self.window = window
+        self.window = window#10
 
         # records (all of them by default)
         if records is not None:
@@ -75,7 +76,7 @@ class EventDataset(Dataset):
 
         ###########################
         # Checks on H5
-        self.fs = fs
+        self.fs = fs#32
 
         # check event names
         if events:
@@ -89,35 +90,35 @@ class EventDataset(Dataset):
             get_data = memory.cache(get_h5_data)
             get_events = memory.cache(get_h5_events)
 
-        self.window_size = int(self.window * self.fs)
-        self.number_of_channels = len(signals)
+        self.window_size = int(self.window * self.fs)# 10s * 32 = 320
+        self.number_of_channels = len(signals)#2
         # used in network architecture
-        self.input_shape = (self.number_of_channels, self.window_size)
-        self.minimum_overlap = minimum_overlap  # for events on the edge of window_size
+        self.input_shape = (self.number_of_channels, self.window_size)#2,320
+        self.minimum_overlap = minimum_overlap  # for events on the edge of window_size,0.5
 
-        # Open signals and events
+        # Open signals and events,初始化四个属性
         self.signals = {}
         self.events = {}
         self.index_to_record = []
         self.index_to_record_event = []  # link index to record
 
-        # Preprocess signals from records
-        data = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(get_data)(
+        # Preprocess signals from records,对信号进行预处理
+        data = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(get_data)(#并行读取数据signals,5个样本，每个样本2*691200
             filename="{}/{}".format(h5_directory, record),
             signals=signals,
             fs=fs
         ) for record in self.records)
 
         for record, data in zip(self.records, data):
-            signal_size = data.shape[-1]
-            number_of_windows = signal_size // self.window_size
+            signal_size = data.shape[-1]#691200
+            number_of_windows = signal_size // self.window_size#691200//320=2160,有这么多个窗口
 
-            self.signals[record] = {
+            self.signals[record] = {#键值对，每个record对应一个字典
                 "data": data,
                 "size": signal_size,
             }
 
-            self.index_to_record.extend([
+            self.index_to_record.extend([#一个record，一个index，一个窗口，index是窗口索引
                 {
                     "record": record,
                     "index": x * self.window_size
@@ -131,7 +132,7 @@ class EventDataset(Dataset):
                 max_index = signal_size - self.window_size
 
                 for label, event in enumerate(events):
-                    data = get_events(
+                    data = get_events(# 得到事件的数据，每个样本的事件数据是2*事件个数，2，130
                         filename="{}/{}".format(h5_directory, record),
                         event=event,
                         fs=self.fs,
@@ -143,7 +144,8 @@ class EventDataset(Dataset):
                         "label": label,
                     }
 
-                    for start, duration in zip(*data):
+                    for start, duration in zip(*data):#同时便利start和duration两个列表，计算每个事件的开始和结束索引，然后更新事件索引集合。
+                        #然后，它计算没有事件的索引，并将每个事件的记录，最大索引，事件索引和没有事件的索引
                         stop = start + duration
                         duration_overlap = duration * self.minimum_overlap
 
@@ -161,8 +163,8 @@ class EventDataset(Dataset):
 
                 self.index_to_record_event.extend([
                     {
-                        "record": record,
-                        "max_index": max_index,
+                        "record": record,#样本名字
+                        "max_index": max_index,#最大索引signal_size - self.window_size
                         "events_indexes": events_indexes,
                         "no_events_indexes": no_events_indexes,
                     } for _ in range(number_of_events)
@@ -387,6 +389,7 @@ class BalancedEventDataset(EventDataset):
                  ratio_positive=0.5,
                  n_jobs=1,
                  cache_data=True,
+                 training_mode=None,#之后用来安排是否存在自监督的参数
                  ):
         super(BalancedEventDataset, self).__init__(
             h5_directory=h5_directory,
@@ -401,6 +404,7 @@ class BalancedEventDataset(EventDataset):
             cache_data=cache_data,
         )
         self.ratio_positive = ratio_positive
+    
 
     def __len__(self):
         return len(self.index_to_record_event)

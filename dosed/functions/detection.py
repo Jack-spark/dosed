@@ -17,17 +17,17 @@ class Detection(nn.Module):
         self.overlap_non_maximum_suppression = overlap_non_maximum_suppression
         self.classification_threshold = classification_threshold
 
-    def forward(self, localizations, classifications, localizations_default):
+    def forward(self, localizations, classifications, localizations_default):# 这里是模型返回结果，然后弄输出的地方的
         batch = localizations.size(0)
-        scores = nn.Softmax(dim=2)(classifications)
+        scores = nn.Softmax(dim=2)(classifications)#这里是预测每一类的概率值,128,63,2
         results = []
-        for i in range(batch):
+        for i in range(batch):#每一个batch
             result = []
-            localization_decoded = decode(localizations[i], localizations_default)
+            localization_decoded = decode(localizations[i], localizations_default)#这里可能是那个偏离值
             for class_index in range(1, self.number_of_classes):  # we remove class 0
-                scores_batch_class = scores[i, :, class_index]
-                scores_batch_class_selected = scores_batch_class[
-                    scores_batch_class > self.classification_threshold]
+                scores_batch_class = scores[i, :, class_index]#选择第二个标签，也就是spindle类的概率
+                scores_batch_class_selected = scores_batch_class[#selected是23，batch_class是63
+                    scores_batch_class > self.classification_threshold]#选择概率大于lassification_threshold的
                 if len(scores_batch_class_selected) == 0:
                     continue
                 localizations_decoded_selected = localization_decoded[

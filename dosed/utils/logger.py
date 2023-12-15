@@ -22,10 +22,11 @@ class Logger:
 
     def __init__(self,
                  num_events,
-                 output_dir=None,
+                 output_dir,
                  output_fname='train_history.json',
                  metrics=["precision", "recall", "f1"],
                  name_events=["event_type_1", "event_type_2"],
+                 train_logger=None,
                  ):
         """
         Initialize a Logger.
@@ -84,8 +85,8 @@ class Logger:
         self.history_metrics.append(self.current_epoch_metrics)
         self.history_time.append(time.time())
         self.current_epoch_metrics = {
-            name_event: {metric: [] for metric in self.metrics}
-            for name_event in self.name_events
+            name_event: {metric: [] for metric in self.metrics}#几个度量指标
+            for name_event in self.name_events#event_type_1, event_type_2,几个时间
         }
 
     def dump_train_history(self):

@@ -35,7 +35,8 @@ class TrainerBaseAdam(TrainerBase):
                 "output_dir": None,
                 "output_fname": 'train_history.json',
                 "metrics": ["precision", "recall", "f1"],
-                "name_events": ["event_type_1"]
+                "name_events": ["event_type_1"],
+                "train_logger": True,
             },
             threshold_space={
                 "upper_bound": 0.85,

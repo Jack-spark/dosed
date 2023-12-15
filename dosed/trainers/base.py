@@ -7,10 +7,14 @@ import numpy as np
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
 from ..datasets import collate
 from ..functions import (loss_functions, available_score_functions, compute_metrics_dataset)
 from ..utils import (match_events_localization_to_default_localizations, Logger)
+
+from ..functions import augmentations
+from ..functions.loss import NTXentLoss, SupConLoss
 
 
 class TrainerBase:
@@ -42,7 +46,7 @@ class TrainerBase:
                 "output_dir": None,
                 "output_fname": 'train_history.json',
                 "metrics": ["precision", "recall", "f1"],
-                "name_events": ["event_type_1"]
+                "name_events": ["event_type_1"],
             },
             threshold_space={
                 "upper_bound": 0.85,
@@ -140,61 +144,78 @@ class TrainerBase:
 
         return best_metrics_epoch, best_thresh
 
-    def get_batch_loss(self, data):
+    def get_batch_loss(self, data, config=None, training_mode=None, temporal_contr_model=None):
         """ Single forward and backward pass """
 
         # Get signals and labels
-        signals, events = data
+        signals, events = data#signal=128，2，320，events=128，每一个是1，3，这个data是dataloader里的,events有起始时间，持续时间和标签
         x = signals.to(self.net.device)
-
         # Forward
-        localizations, classifications, localizations_default = self.net.forward(x)
+        localizations, classifications, localizations_default, feature = self.net.forward(x)
+        if training_mode == "self_supervised":
+            aug1, aug2 = augmentations.DataTransform(x, config) 
+            aug1, aug2 = aug1.float(), aug2.float()
+            aug1, aug2 = aug1.to(self.net.device), aug2.to(self.net.device)
+            feature_aug1, feature_aug2 = self.net.forward(aug1)[-1], self.net.forward(aug2)[-1]
+            feature_aug1 = F.normalize(feature_aug1, dim=1)
+            feature_aug2 = F.normalize(feature_aug2, dim=1)
+            temp_cont_loss1, temp_cont_feat1 = temporal_contr_model(feature_aug1, feature_aug2)
+            temp_cont_loss2, temp_cont_feat2 = temporal_contr_model(feature_aug2, feature_aug1)
+            lambda1 = 1
+            lambda2 = 0.7
+            nt_xent_criterion = NTXentLoss(self.net.device, config.batch_size, config.Context_Cont.temperature,
+                                           config.Context_Cont.use_cosine_similarity)
+            loss = (temp_cont_loss1 + temp_cont_loss2) * lambda1 + \
+                   nt_xent_criterion(temp_cont_feat1, temp_cont_feat2) * lambda2
+            return loss
+        else:
+            #classification=128，63，2
+            # Matching
+            localizations_target, classifications_target = self.matching(
+                localizations_default=localizations_default,
+                events=events,
+                threshold_overlap=self.matching_overlap)
+            localizations_target = localizations_target.to(self.net.device)
+            classifications_target = classifications_target.to(self.net.device)
 
-        # Matching
-        localizations_target, classifications_target = self.matching(
-            localizations_default=localizations_default,
-            events=events,
-            threshold_overlap=self.matching_overlap)
-        localizations_target = localizations_target.to(self.net.device)
-        classifications_target = classifications_target.to(self.net.device)
+            # Loss，真实和预测之间的比较
+            (loss_classification_positive,
+            loss_classification_negative,
+            loss_localization) = (
+                self.loss_function(localizations,
+                                    classifications,
+                                    localizations_target,
+                                    classifications_target))
+            return loss_classification_positive, \
+                loss_classification_negative, \
+                loss_localization
 
-        # Loss
-        (loss_classification_positive,
-         loss_classification_negative,
-         loss_localization) = (
-             self.loss_function(localizations,
-                                classifications,
-                                localizations_target,
-                                classifications_target))
-
-        return loss_classification_positive, \
-            loss_classification_negative, \
-            loss_localization
-
-    def train(self, train_dataset, validation_dataset, batch_size=128):
+    def train(self, train_dataset, validation_dataset, batch_size=4, training_mode=None, 
+              config=None, temporal_contr_model=None, drop_last=False):
         """ Metwork training with backprop """
-
+    # 这里是训练的函数，包含着输入输出
         dataloader_parameters = {
-            "num_workers": 0,
+            "num_workers": 6,
             "shuffle": True,
             "collate_fn": collate,
             "pin_memory": True,
             "batch_size": batch_size,
         }
-        dataloader_train = DataLoader(train_dataset, **dataloader_parameters)
-        dataloader_val = DataLoader(validation_dataset, **dataloader_parameters)
+        dataloader_train = DataLoader(train_dataset, **dataloader_parameters, drop_last=drop_last)
+        dataloader_val = DataLoader(validation_dataset, **dataloader_parameters, drop_last=drop_last)
 
         metrics_final = {
             metric: 0
             for metric in self.metrics.keys()
         }
+        # metrics_final = {0}，包括召回率，精确率，f1
 
         best_value = -np.inf
         best_threshold = None
         best_net = None
         counter_patience = 0
         last_update = None
-        t = tqdm.tqdm(range(self.epochs,))
+        t = tqdm.tqdm(range(self.epochs,))#tqdm是一个进度条库，range是一个迭代器
         for epoch, _ in enumerate(t):
             if epoch != 0:
                 t.set_postfix(
@@ -220,99 +241,112 @@ class TrainerBase:
 
                 # Set network to train mode
                 self.net.train()
+                if training_mode == "self_supervised":
+                    loss = self.get_batch_loss(data, config, training_mode, temporal_contr_model)
+                    print('自监督损失计算成功')
+                else:    
+                    (loss_classification_positive,
+                    loss_classification_negative,
+                    loss_localization) = self.get_batch_loss(data)
 
-                (loss_classification_positive,
-                 loss_classification_negative,
-                 loss_localization) = self.get_batch_loss(data)
+                    epoch_loss_classification_positive_train += \
+                        loss_classification_positive
+                    epoch_loss_classification_negative_train += \
+                        loss_classification_negative
+                    epoch_loss_localization_train += loss_localization
 
-                epoch_loss_classification_positive_train += \
-                    loss_classification_positive
-                epoch_loss_classification_negative_train += \
-                    loss_classification_negative
-                epoch_loss_localization_train += loss_localization
-
-                loss = loss_classification_positive \
-                    + loss_classification_negative \
-                    + loss_localization
+                    loss = loss_classification_positive \
+                        + loss_classification_negative \
+                        + loss_localization
                 loss.backward()
 
                 # gradient descent
                 self.optimizer.step()
-
+                print('反向传播成功')
+            
             epoch_loss_classification_positive_train /= (i + 1)
             epoch_loss_classification_negative_train /= (i + 1)
             epoch_loss_localization_train /= (i + 1)
 
-            for i, data in enumerate(dataloader_val, 0):
+            
+            if training_mode == None:
+                for i, data in enumerate(dataloader_val, 0):
 
-                (loss_classification_positive,
-                 loss_classification_negative,
-                 loss_localization) = self.get_batch_loss(data)
+                    (loss_classification_positive,
+                    loss_classification_negative,
+                    loss_localization) = self.get_batch_loss(data)
 
-                epoch_loss_classification_positive_val += \
-                    loss_classification_positive
-                epoch_loss_classification_negative_val += \
-                    loss_classification_negative
-                epoch_loss_localization_val += loss_localization
-
-            epoch_loss_classification_positive_val /= (i + 1)
-            epoch_loss_classification_negative_val /= (i + 1)
-            epoch_loss_localization_val /= (i + 1)
-
-            metrics_epoch, threshold = self.validate(
-                validation_dataset=validation_dataset,
-                threshold_space=self.threshold_space,
-            )
-
-            if self.threshold_space["zoom_in"] and threshold != -1:
-                threshold_space_size = self.threshold_space["upper_bound"] - \
-                    self.threshold_space["lower_bound"]
-                zoom_metrics_epoch, zoom_threshold = self.validate(
+                    epoch_loss_classification_positive_val += \
+                        loss_classification_positive
+                    epoch_loss_classification_negative_val += \
+                        loss_classification_negative
+                    epoch_loss_localization_val += loss_localization
+                # 计算每个epoch的平均损失
+                epoch_loss_classification_positive_val /= (i + 1)
+                epoch_loss_classification_negative_val /= (i + 1)
+                epoch_loss_localization_val /= (i + 1)
+                # self.validate方法对当前模型进行验证，获取当前的评估指标和阈值
+                metrics_epoch, threshold = self.validate(
                     validation_dataset=validation_dataset,
-                    threshold_space={
-                        "upper_bound": threshold + 0.1 * threshold_space_size,
-                        "lower_bound": threshold - 0.1 * threshold_space_size,
-                        "num_samples": self.threshold_space["num_samples"],
-                    })
-                if zoom_metrics_epoch[self.metric_to_maximize] > metrics_epoch[
-                        self.metric_to_maximize]:
-                    metrics_epoch = zoom_metrics_epoch
-                    threshold = zoom_threshold
+                    threshold_space=self.threshold_space,
+                )
 
-            if self.save_folder:
-                self.net.save(self.save_folder + str(epoch) + "_net")
+                if self.threshold_space["zoom_in"] and threshold != -1:
+                    threshold_space_size = self.threshold_space["upper_bound"] - \
+                        self.threshold_space["lower_bound"]
+                    zoom_metrics_epoch, zoom_threshold = self.validate(
+                        validation_dataset=validation_dataset,
+                        threshold_space={
+                            "upper_bound": threshold + 0.1 * threshold_space_size,
+                            "lower_bound": threshold - 0.1 * threshold_space_size,
+                            "num_samples": self.threshold_space["num_samples"],
+                        })
+                    # 更新最佳评估指标、最佳阈值和最佳模型，这是这个epoch的评估指标
+                    if zoom_metrics_epoch[self.metric_to_maximize] > metrics_epoch[
+                            self.metric_to_maximize]:
+                        metrics_epoch = zoom_metrics_epoch
+                        threshold = zoom_threshold
 
-            if metrics_epoch[self.metric_to_maximize] > best_value:
-                best_value = metrics_epoch[self.metric_to_maximize]
-                best_threshold = threshold
-                last_update = epoch
-                best_net = copy.deepcopy(self.net)
-                metrics_final = {
-                    metric: metrics_epoch[metric]
-                    for metric in self.metrics.keys()
-                }
-                counter_patience = 0
+                net_parameters = self.net.state_dict()
+                # if self.save_folder:
+                    # self.net.save(self.save_folder + str(epoch) + ".pth", net_parameters)
+                # 当前epoch没有优于最佳评估指标，counter_patience+1
+                if metrics_epoch[self.metric_to_maximize] > best_value:
+                    best_value = metrics_epoch[self.metric_to_maximize]
+                    best_threshold = threshold
+                    last_update = epoch
+                    best_net = copy.deepcopy(self.net)
+                    metrics_final = {
+                        metric: metrics_epoch[metric]
+                        for metric in self.metrics.keys()
+                    }
+                    counter_patience = 0
+                else:
+                    counter_patience += 1
+                # 多个epoch都没有提高指标的话，就停止训练，self.patience是最大的epoch数
+                if counter_patience > self.patience:
+                    break
+                # 停止训练的处理    
+                self.on_epoch_end()
+
+                if "train_logger" in vars(self):
+                    self.train_logger.add_new_loss(
+                        epoch_loss_localization_train.item(),
+                        epoch_loss_classification_positive_train.item(),
+                        epoch_loss_classification_negative_train.item(),
+                        mode="train"
+                    )
+                    self.train_logger.add_new_loss(
+                        epoch_loss_localization_val.item(),
+                        epoch_loss_classification_positive_val.item(),
+                        epoch_loss_classification_negative_val.item(),
+                        mode="validation"
+                    )
+                    self.train_logger.add_current_metrics_to_history()
+                    self.train_logger.dump_train_history()
             else:
-                counter_patience += 1
-
-            if counter_patience > self.patience:
-                break
-
-            self.on_epoch_end()
-            if "train_logger" in vars(self):
-                self.train_logger.add_new_loss(
-                    epoch_loss_localization_train.item(),
-                    epoch_loss_classification_positive_train.item(),
-                    epoch_loss_classification_negative_train.item(),
-                    mode="train"
-                )
-                self.train_logger.add_new_loss(
-                    epoch_loss_localization_val.item(),
-                    epoch_loss_classification_positive_val.item(),
-                    epoch_loss_classification_negative_val.item(),
-                    mode="validation"
-                )
-                self.train_logger.add_current_metrics_to_history()
-                self.train_logger.dump_train_history()
-
+                best_net = copy.deepcopy(self.net)
+                metrics_final = 0
+                best_threshold = 0
         return best_net, metrics_final, best_threshold
+        
