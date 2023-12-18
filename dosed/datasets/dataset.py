@@ -265,12 +265,14 @@ class EventDataset(Dataset):
             signal = self.signals[record]["data"][:, start:stop]
 
             signal_strided = torch.FloatTensor(
-                as_strided(
+                np.copy(
+                    as_strided(
                     x=signal,
                     shape=(batch_size, signal.shape[0], self.window_size),
                     strides=(signal.strides[1] * stride, signal.strides[0],
                              signal.strides[1]),
-                )
+                    )
+                )  
             )
             time = t[start:stop]
             t_strided = as_strided(
@@ -292,12 +294,15 @@ class EventDataset(Dataset):
             signal = self.signals[record]["data"][:, start:end]
 
             signal_strided = torch.FloatTensor(
-                as_strided(
+                np.copy(
+                    as_strided(
                     x=signal,
                     shape=(batch_end, signal.shape[0], self.window_size),
                     strides=(signal.strides[1] * stride, signal.strides[0],
                              signal.strides[1]),
+                    )
                 )
+                
             )
             time = t[start:end]
             t_strided = as_strided(

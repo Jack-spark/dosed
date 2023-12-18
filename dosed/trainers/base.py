@@ -23,10 +23,12 @@ class TrainerBase:
     def __init__(
             self,
             net,
+            temporal_contr_model=None,
             optimizer_parameters={
                 "lr": 0.001,
                 "weight_decay": 1e-8,
             },
+            temp_cont_optimizer=None,
             loss_specs={
                 "type": "focal",
                 "parameters": {
@@ -56,12 +58,13 @@ class TrainerBase:
             },
             matching_overlap=0.5,
     ):
-
         self.net = net
+        self.temporal_contr_model = temporal_contr_model#TC模块
         print("Device: ", net.device)
         self.loss_function = loss_functions[loss_specs["type"]](
             **loss_specs["parameters"])
         self.optimizer = optim.SGD(net.parameters(), **optimizer_parameters)
+        self.temp_cont_optimizer = temp_cont_optimizer# TC的优化器
         self.metrics = {
             score: score_function for score, score_function in
             available_score_functions.items()
@@ -144,7 +147,7 @@ class TrainerBase:
 
         return best_metrics_epoch, best_thresh
 
-    def get_batch_loss(self, data, config=None, training_mode=None, temporal_contr_model=None):
+    def get_batch_loss(self, data, config=None, training_mode=None):
         """ Single forward and backward pass """
 
         # Get signals and labels
@@ -159,11 +162,11 @@ class TrainerBase:
             feature_aug1, feature_aug2 = self.net.forward(aug1)[-1], self.net.forward(aug2)[-1]
             feature_aug1 = F.normalize(feature_aug1, dim=1)
             feature_aug2 = F.normalize(feature_aug2, dim=1)
-            temp_cont_loss1, temp_cont_feat1 = temporal_contr_model(feature_aug1, feature_aug2)
-            temp_cont_loss2, temp_cont_feat2 = temporal_contr_model(feature_aug2, feature_aug1)
+            temp_cont_loss1, temp_cont_feat1 = self.temporal_contr_model(feature_aug1, feature_aug2)
+            temp_cont_loss2, temp_cont_feat2 = self.temporal_contr_model(feature_aug2, feature_aug1)
             lambda1 = 1
             lambda2 = 0.7
-            nt_xent_criterion = NTXentLoss(self.net.device, config.batch_size, config.Context_Cont.temperature,
+            nt_xent_criterion = NTXentLoss(self.net.device, 64, config.Context_Cont.temperature,
                                            config.Context_Cont.use_cosine_similarity)
             loss = (temp_cont_loss1 + temp_cont_loss2) * lambda1 + \
                    nt_xent_criterion(temp_cont_feat1, temp_cont_feat2) * lambda2
@@ -190,8 +193,8 @@ class TrainerBase:
                 loss_classification_negative, \
                 loss_localization
 
-    def train(self, train_dataset, validation_dataset, batch_size=4, training_mode=None, 
-              config=None, temporal_contr_model=None, drop_last=False):
+    def train(self, train_dataset, validation_dataset, batch_size=64, training_mode=None, 
+              config=None, drop_last=False):
         """ Metwork training with backprop """
     # 这里是训练的函数，包含着输入输出
         dataloader_parameters = {
@@ -231,18 +234,19 @@ class TrainerBase:
             epoch_loss_classification_positive_val = 0.0
             epoch_loss_classification_negative_val = 0.0
             epoch_loss_localization_val = 0.0
-
+            # 模型开始训练放在
+            self.net.train()
+            if (self.temporal_contr_model is not None):
+                self.temporal_contr_model.train()
             for i, data in enumerate(dataloader_train, 0):
-
                 # On batch start
                 self.on_batch_start()
-
                 self.optimizer.zero_grad()
-
+                if (self.temp_cont_optimizer is not None):
+                    self.temp_cont_optimizer.zero_grad()# TC的优化器
                 # Set network to train mode
-                self.net.train()
                 if training_mode == "self_supervised":
-                    loss = self.get_batch_loss(data, config, training_mode, temporal_contr_model)
+                    loss = self.get_batch_loss(data, config, training_mode)
                     print('自监督损失计算成功')
                 else:    
                     (loss_classification_positive,
@@ -259,9 +263,10 @@ class TrainerBase:
                         + loss_classification_negative \
                         + loss_localization
                 loss.backward()
-
                 # gradient descent
                 self.optimizer.step()
+                if (self.temp_cont_optimizer is not None):
+                    self.temp_cont_optimizer.step()
                 print('反向传播成功')
             
             epoch_loss_classification_positive_train /= (i + 1)

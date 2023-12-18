@@ -12,6 +12,8 @@ class TrainerBaseAdam(TrainerBase):
     def __init__(
             self,
             net,
+            temporal_contr_model,
+            temp_cont_optimizer,
             optimizer_parameters={
                 "lr": 0.001,
                 "weight_decay": 1e-8,
@@ -48,7 +50,9 @@ class TrainerBaseAdam(TrainerBase):
     ):
         super(TrainerBaseAdam, self).__init__(
             net=net,
+            temporal_contr_model=temporal_contr_model,
             optimizer_parameters=optimizer_parameters,
+            temp_cont_optimizer=temp_cont_optimizer,
             loss_specs=loss_specs,
             metrics=metrics,
             epochs=epochs,

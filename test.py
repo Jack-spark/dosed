@@ -15,6 +15,7 @@ from dosed.models import DOSED3 as model
 from dosed.datasets import get_train_validation_test
 from dosed.trainers import trainers
 from dosed.preprocessing import GaussianNoise, RescaleNormal, Invert
+from dosed.functions import compute_metrics_dataset
 
 seed = 2019
 train, validation, test = get_train_validation_test(h5_directory,
@@ -25,6 +26,7 @@ train, validation, test = get_train_validation_test(h5_directory,
 print("Number of records train:", len(train))
 print("Number of records validation:", len(validation))
 print("Number of records test:", len(test))
+train = train[0:2]
 window = 10  # window duration in seconds
 ratio_positive = 0.5  # When creating the batch, sample containing at least one spindle will be drawn with that probability
 # 一个训练批次中，每个样本包含至少一个脑电活动（spindle）的概率
@@ -110,8 +112,7 @@ net_parameters = {
 }
 net = model(**net_parameters)
 net = net.to(device)
-inpu = torch.randn(1, 2, 320).to(device)
-out = net(inpu)
+
 optimizer_parameters = {
     "lr": 5e-3,
     "weight_decay": 1e-8,
@@ -123,10 +124,12 @@ loss_specs = {
         "device": device,
     }
 }
-epochs = 1
+epochs = 50
 trainer = trainers["adam"](
     net,
     optimizer_parameters=optimizer_parameters,
+    temporal_contr_model=None,
+    temp_cont_optimizer=None,
     loss_specs=loss_specs,
     epochs=epochs,
 )
@@ -135,38 +138,23 @@ if __name__ == "__main__":
         dataset_train,
         dataset_validation,
     )
-    predictions = best_net_train.predict_dataset(
+    # 这里保存的是train只用0：2训练出来的模型，也就是部分监督数据模型
+    torch.save({
+        'epoch': epochs,
+        'model_state_dict': best_net_train.state_dict(),
+        'best_metrics_train': best_metrics_train,
+        'best_threshold_train': best_threshold_train,
+    }, 'checkpoint_suprvised(train(0:2)).pth')
+    # 这里要保存用所有数据训练出来的模型，也就是自监督模型
+    metrics_test = compute_metrics_dataset(
+        best_net_train,
         dataset_test,
         best_threshold_train,
+        test_metrics=["precision", "recall", "f1"],
     )
+    print(metrics_test)
+    # 再用自监督模型进行部分数据微调，尝试测试准确率
+
     
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    record = dataset_test.records[1]
-
-    index_spindle = 30
-    window_duration = 5
-
-    # retrive spindle at the right index
-    spindle_start = float(predictions[record][0][index_spindle][0]) / sampling_frequency
-    spindle_end = float(predictions[record][0][index_spindle][1]) / sampling_frequency
-
-    # center data window on annotated spindle 
-    start_window = spindle_start + (spindle_end - spindle_start) / 2 - window_duration
-    stop_window = spindle_start + (spindle_end - spindle_start) / 2 + window_duration
-
-    # Retrieve EEG data at right index
-    index_start = int(start_window * sampling_frequency)#回程采样频率
-    index_stop = int(stop_window * sampling_frequency)
-    y = dataset_test.signals[record]["data"][0][index_start:index_stop]
-
-    # Build corresponding time support
-    t = start_window + np.cumsum(np.ones(index_stop - index_start) * 1 / sampling_frequency)
-
-    plt.figure(figsize=(16, 5))
-    plt.plot(t, y)
-    plt.axvline(spindle_end)
-    plt.axvline(spindle_start)
-    plt.ylim([-1, 1])
-    plt.show()
+    
+    

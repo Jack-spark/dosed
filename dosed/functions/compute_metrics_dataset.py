@@ -33,7 +33,7 @@ def compute_metrics_dataset(
     all_predicted_events = network.predict_dataset(
         test_dataset,
         threshold,
-        batch_size=128)
+        batch_size=64)
 
     found_some_events = False
 
