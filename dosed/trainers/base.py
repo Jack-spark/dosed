@@ -45,7 +45,7 @@ class TrainerBase:
             save_folder=None,
             logger_parameters={
                 "num_events": 1,
-                "output_dir": None,
+                "output_dir": 'None',
                 "output_fname": 'train_history.json',
                 "metrics": ["precision", "recall", "f1"],
                 "name_events": ["event_type_1"],
@@ -247,7 +247,6 @@ class TrainerBase:
                 # Set network to train mode
                 if training_mode == "self_supervised":
                     loss = self.get_batch_loss(data, config, training_mode)
-                    print('自监督损失计算成功')
                 else:    
                     (loss_classification_positive,
                     loss_classification_negative,
@@ -267,8 +266,6 @@ class TrainerBase:
                 self.optimizer.step()
                 if (self.temp_cont_optimizer is not None):
                     self.temp_cont_optimizer.step()
-                print('反向传播成功')
-            
             epoch_loss_classification_positive_train /= (i + 1)
             epoch_loss_classification_negative_train /= (i + 1)
             epoch_loss_localization_train /= (i + 1)
@@ -311,10 +308,9 @@ class TrainerBase:
                             self.metric_to_maximize]:
                         metrics_epoch = zoom_metrics_epoch
                         threshold = zoom_threshold
-
                 net_parameters = self.net.state_dict()
-                # if self.save_folder:
-                    # self.net.save(self.save_folder + str(epoch) + ".pth", net_parameters)
+                if self.save_folder:
+                    self.net.save(self.save_folder + str(epoch) + ".pth", net_parameters)
                 # 当前epoch没有优于最佳评估指标，counter_patience+1
                 if metrics_epoch[self.metric_to_maximize] > best_value:
                     best_value = metrics_epoch[self.metric_to_maximize]

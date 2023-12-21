@@ -80,7 +80,7 @@ class BaseNet(nn.Module):
         for record in inference_dataset.records:# record是文件名
             predictions[record] = []
             #result=1,691200
-            result = np.zeros((self.number_of_classes - 1,
+            result = np.zeros((self.number_of_classes - 1,#result.shape = [1, 691200]
                                inference_dataset.signals[record]["size"]))# 信号总长度691200
             for signals, times in inference_dataset.get_record_batch(#把信号切成一批批的窗口，每10s一个，重叠5s
                     record,

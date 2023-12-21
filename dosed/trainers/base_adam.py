@@ -31,10 +31,10 @@ class TrainerBaseAdam(TrainerBase):
             epochs=100,
             metric_to_maximize="f1",
             patience=None,
-            save_folder=None,
+            save_folder='savemodels/',
             logger_parameters={
                 "num_events": 1,
-                "output_dir": None,
+                "output_dir": 'log',
                 "output_fname": 'train_history.json',
                 "metrics": ["precision", "recall", "f1"],
                 "name_events": ["event_type_1"],
